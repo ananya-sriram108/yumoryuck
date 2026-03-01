@@ -1,0 +1,721 @@
+import os
+import streamlit as st
+import requests
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from google import genai
+import pandas as pd
+import time
+import random
+
+# --- Load environment variables ---
+load_dotenv()
+if not os.getenv("GEMINI_API_KEY"):
+    st.error("GEMINI_API_KEY not found. Check your .env file.")
+    st.stop()
+
+# --- Configure Gemini client ---
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+# --- Default Gemini model ---
+DEFAULT_MODEL = "models/gemini-2.5-flash"
+
+# --- Page configuration ---
+st.set_page_config(
+    page_title="Yum or Yuck! - Cookie Inspector",
+    page_icon="🍪",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# --- Custom CSS for Baking Theme ---
+st.markdown("""
+    <style>
+    /* Global Background */
+    .stApp {
+        background-color: #FFF8E7; /* Creamy Dough Color */
+        color: #4E342E; /* Dark Chocolate Text */
+    }
+    
+    /* Headers */
+    h1, h2, h3 {
+        color: #D84315 !important; /* Burnt Orange / Oven Glow */
+        font-family: 'Comic Sans MS', 'Chalkboard SE', sans-serif; /* Playful Font */
+    }
+    
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background-color: #FFE0B2; /* Light Biscuit Color */
+    }
+    
+    /* Buttons */
+    .stButton>button {
+        background-color: #FF7043;
+        color: white;
+        border-radius: 20px;
+        border: 2px solid #D84315;
+        font-weight: bold;
+        transition: all 0.3s ease;
+    }
+    .stButton>button:hover {
+        background-color: #D84315;
+        transform: scale(1.05);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    
+    /* Inputs */
+    .stTextInput>div>div>input {
+        border-radius: 15px;
+        border: 2px solid #FFAB91;
+        background-color: white;
+    }
+    
+    /* Success/Error/Warning Boxes */
+    .stSuccess {
+        background-color: #C8E6C9;
+        border-left: 5px solid #2E7D32;
+    }
+    .stError {
+        background-color: #FFCDD2;
+        border-left: 5px solid #C62828;
+    }
+    .stWarning {
+        background-color: #FFE0B2;
+        border-left: 5px solid #EF6C00;
+    }
+    
+    /* Custom Gamification Classes */
+    .cookie-score {
+        font-size: 48px;
+        font-weight: bold;
+        text-align: center;
+        color: #D84315;
+        text-shadow: 2px 2px #FFCCBC;
+    }
+    .badge-container {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 10px;
+        flex-wrap: wrap;
+    }
+    .badge {
+        background-color: #FFF3E0;
+        border: 2px solid #FF9800;
+        border-radius: 15px;
+        padding: 8px 15px;
+        font-weight: bold;
+        color: #E65100;
+        cursor: help;
+        display: inline-block;
+        margin: 5px;
+        position: relative;
+    }
+    
+    /* Improved Tooltip (Themed Pop-up Style) */
+    .tooltip .tooltiptext {
+        visibility: hidden;
+        width: 200px;
+        background-color: #FFF;
+        color: #4E342E;
+        text-align: center;
+        border-radius: 10px;
+        padding: 10px;
+        position: absolute;
+        z-index: 10;
+        bottom: 125%; /* Position above the badge */
+        left: 50%;
+        margin-left: -100px; /* Center it */
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        border: 2px solid #D84315;
+        font-size: 14px;
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+    
+    .tooltip .tooltiptext::after {
+        content: "";
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        margin-left: -5px;
+        border-width: 5px;
+        border-style: solid;
+        border-color: #D84315 transparent transparent transparent;
+    }
+
+    .tooltip:hover .tooltiptext {
+        visibility: visible;
+        opacity: 1;
+    }
+
+    /* Baker's Note Card */
+    .bakers-note-card {
+        background-color: #FFF3E0;
+        border: 2px dashed #FF9800;
+        border-radius: 10px;
+        padding: 20px;
+        margin-top: 20px;
+        font-family: 'Comic Sans MS', 'Chalkboard SE', sans-serif;
+        color: #5D4037;
+        box-shadow: 3px 3px 10px rgba(0,0,0,0.1);
+    }
+    .bakers-note-card h3 {
+        color: #D84315 !important;
+        border-bottom: 2px solid #FFCCBC;
+        padding-bottom: 10px;
+        margin-top: 0;
+        font-size: 24px;
+    }
+    .bakers-note-card ul {
+        list-style-type: none; /* Remove default bullets */
+        padding-left: 0;
+        margin: 0;
+    }
+    .bakers-note-card li {
+        margin-bottom: 10px;
+        padding-left: 35px; /* Space for cookie */
+        position: relative;
+        font-size: 16px;
+        line-height: 1.5;
+    }
+    .bakers-note-card li::before {
+        content: '🍪';
+        position: absolute;
+        left: 0;
+        top: 2px;
+        font-size: 1.2em;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- Feature: Informed Baker's Blog ---
+def draw_blog():
+    st.title("📰 The Informed Baker's Blog")
+    st.markdown("### *Freshly Baked Privacy News & Tips*")
+    
+    st.markdown("---")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown("""
+        ### 🍪 Why Third-Party Cookies Crumble
+        *Posted on October 24, 2024 by Chef Secure*
+        
+        Imagine inviting a friend over for cookies, but they bring a stranger who follows you around your kitchen, writing down everything you eat. That's a **Third-Party Cookie**!
+        
+        Browsers like Chrome and Safari are starting to block these uninvited guests. This means advertisers will have a harder time tracking your "diet" across the web.
+        
+        **Baker's Tip:** Use privacy-focused browsers to keep your kitchen private!
+        """)
+        
+        st.markdown("---")
+        
+        st.markdown("""
+        ### 🔒 The Secret Ingredient: HTTPS
+        *Posted on October 18, 2024 by Granny Smith*
+        
+        When you send a recipe to a friend, you don't want the mailman reading it. **HTTPS** is like putting your recipe in a locked box. 
+        
+        If a website URL starts with `https://`, it means the connection is secure. If it's just `http://`, your ingredients are exposed!
+        
+        **Baker's Tip:** Always look for the padlock icon in the address bar before sharing personal data.
+        """)
+
+    with col2:
+        st.info("💡 **Did You Know?**\n\nIncognito mode doesn't make you invisible! It just means your browser won't save the history locally. Your ISP can still smell what you're baking.")
+        st.warning("⚠️ **Phishing Alert**\n\nWatch out for emails claiming you won a lifetime supply of flour. If it looks too good to be true, it's probably a scam!")
+
+# --- Feature: The Baking Book of Simple Digital Literacy ---
+def draw_literacy_book():
+    st.title("📖 The Baking Book of Simple Digital Literacy")
+    st.markdown("### *Decoding Tech Terms with Baking Metaphors*")
+    
+    st.markdown("---")
+    
+    terms = {
+        "Cookie 🍪": "A small crumb of data left on your browser by a website. Some are useful (remembering your login), others are stale (tracking you).",
+        "Cache 🥫": "A pantry where your browser stores ingredients (images, files) so it doesn't have to go to the store (server) every time you visit a page.",
+        "Firewall 🚪": "The oven door that keeps the heat in and bad things out. It blocks unauthorized access to your computer kitchen.",
+        "Phishing 🎣": "When someone tries to trick you into giving up your secret recipe (password) by pretending to be a trustworthy food critic.",
+        "Cloud ☁️": "A giant bakery in the sky where you can store your dough (files) and access it from any kitchen.",
+        "IP Address 🏠": "The street address of your digital bakery. Every device connected to the internet has one.",
+        "Encryption 🔐": "Scrambling your recipe so only people with the secret decoder ring can read it.",
+        "Algorithm 🥣": "A step-by-step recipe that computers follow to solve a problem or decide what content to show you."
+    }
+    
+    cols = st.columns(2)
+    for i, (term, definition) in enumerate(terms.items()):
+        with cols[i % 2]:
+            with st.expander(f"**{term}**", expanded=True):
+                st.write(definition)
+
+# --- Sidebar options ---
+with st.sidebar:
+    st.image("https://em-content.zobj.net/source/microsoft-teams/363/cookie_1f36a.png", width=100)
+    st.header("🧑‍🍳 The Kitchen")
+    
+    # Navigation
+    page = st.radio("Navigate", ["Cookie Inspector", "An Informed Baker’s Blog", "The Baking Book of Simple Digital Literacy"])
+    
+    st.markdown("---")
+    
+    enable_voice = st.checkbox("Enable Voice Summary (ElevenLabs)", value=False)
+    st.markdown("---")
+    st.markdown("**Yum or Yuck!** analyzes website ingredients (cookies) to see if they are safe and sweet or risky and bitter.")
+
+# --- Page Routing ---
+if page == "An Informed Baker’s Blog":
+    draw_blog()
+    st.stop()
+elif page == "The Baking Book of Simple Digital Literacy":
+    draw_literacy_book()
+    st.stop()
+
+# --- App title ---
+col_title, col_icon = st.columns([4, 1])
+with col_title:
+    st.title("🍪 Yum or Yuck!")
+    st.markdown("### *The Gamified Cookie Inspector*")
+with col_icon:
+    pass
+
+st.write("Paste a website URL below and we'll taste-test its cookies for you!")
+
+# --- URL input ---
+url = st.text_input("Enter Website URL to Bake:", placeholder="https://...")
+
+# --- Function to fetch website text ---
+def fetch_website_text(url):
+    try:
+        if not url.startswith("http"):
+            url = "https://" + url
+        response = requests.get(url, timeout=8)
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Remove script/style noise
+        for script in soup(["script", "style"]):
+            script.decompose()
+
+        text = soup.get_text(separator="\n")
+        return text[:6000]  # limit size for AI cost/speed
+    except Exception:
+        return None
+
+# --- Rain Emojis Animation ---
+def rain_food():
+    emoji_list = ["🍪", "🍩", "🧁", "🍰", "🥐", "🥯", "🥨"]
+    
+    # CSS for falling animation
+    st.markdown("""
+    <style>
+    @keyframes fall {
+        0% { top: -10%; transform: translateX(0) rotate(0deg); opacity: 1; }
+        20% { transform: translateX(-20px) rotate(45deg); }
+        40% { transform: translateX(20px) rotate(90deg); }
+        60% { transform: translateX(-20px) rotate(135deg); }
+        80% { transform: translateX(20px) rotate(180deg); }
+        100% { top: 110%; transform: translateX(-20px) rotate(225deg); opacity: 0; }
+    }
+    .falling-food {
+        position: fixed;
+        top: -10%;
+        z-index: 9999;
+        user-select: none;
+        pointer-events: none;
+        animation-name: fall;
+        animation-timing-function: linear;
+        animation-fill-mode: forwards;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Generate HTML for random falling elements
+    html_content = ""
+    for _ in range(30):  # Number of items
+        emoji = random.choice(emoji_list)
+        left = random.randint(0, 95)
+        duration = random.uniform(3, 7)
+        delay = random.uniform(0, 2)
+        size = random.randint(20, 50)
+        
+        html_content += f'''
+        <div class="falling-food" style="
+            left: {left}%; 
+            animation-duration: {duration}s; 
+            animation-delay: {delay}s; 
+            font-size: {size}px;">
+            {emoji}
+        </div>
+        '''
+    
+    st.markdown(html_content, unsafe_allow_html=True)
+
+# --- Function to analyze text with Gemini ---
+def analyze_with_gemini(text):
+    prompt = f"""
+    You are a STRICT privacy auditor. 
+You are NOT friendly, NOT optimistic, and you DO NOT assume good intent.
+
+You must analyze the website text and evaluate privacy risk conservatively.
+
+CRITICAL RULES:
+- If the website requires JavaScript and cookies to continue WITHOUT showing a privacy policy in the visible text, treat this as HIGH RISK.
+- If tracking, analytics, ads, third-party scripts, or data sharing are mentioned, assume user data is being collected.
+- If privacy policy is NOT visible in the provided text, penalize heavily.
+- If content is blocked behind "Enable JavaScript and cookies", assume tracking is active.
+- When uncertain, assume WORST-CASE reasonable interpretation.
+
+STEP 1 — Extract Metrics (estimate using keywords if needed):
+Count based on occurrences of keywords like:
+"cookie", "cookies", "tracking", "tracker", "analytics", "ads", "third-party", 
+"google", "facebook", "meta", "pixel", "beacon", "javascript required"
+
+Return:
+
+METRICS:
+Cookies: [integer]
+ThirdParty: [integer]
+JSRequired: [True/False]
+PrivacyPolicyVisible: [True/False]
+
+Rules:
+- Cookies = number of cookie/tracking references or inferred usage
+- ThirdParty = number of third-party trackers, ad systems, or external services mentioned
+- JSRequired = True if site blocks content without JS or heavily depends on JS
+- PrivacyPolicyVisible = True only if an actual privacy policy explanation is visible in the text
+
+STEP 2 — Compute Risk Score STRICTLY using this formula:
+
+Start at 100.
+
+Subtract:
+- 5 points per Cookie
+- 8 points per ThirdParty
+- 15 points if JSRequired is True
+- 25 points if PrivacyPolicyVisible is False
+
+Minimum score = 0.
+Maximum score = 100.
+
+STEP 3 — Determine Risk Level:
+- 80–100 = Low
+- 50–79 = Medium
+- 0–49 = High
+
+STEP 4 — Return output in EXACT format below.
+Do NOT add extra commentary.
+Do NOT add playful paragraphs.
+Do NOT explain scoring logic.
+Do NOT change structure.
+
+FORMAT:
+
+METRICS:
+Cookies: [number]
+ThirdParty: [number]
+JSRequired: [True/False]
+PrivacyPolicyVisible: [True/False]
+Score: [number]
+Risk: [Low/Medium/High]
+
+SUMMARY: [One direct sentence like "They collect and share user data." or "Minimal tracking detected."]
+
+DETAILS:
+- [Bullet point explaining main reason]
+- [Bullet point explaining second reason]
+    
+    Website Text:
+    {text}
+    """
+    try:
+        response = client.models.generate_content(
+            model=DEFAULT_MODEL,
+            contents=prompt,
+        )
+        return response.text
+    except Exception as e:
+        return f"Gemini Error: {e}"
+
+# --- Helper to parse Gemini response ---
+def parse_gemini_response(text):
+    data = {
+        "cookies": 0,
+        "third_party": 0,
+        "js_required": False,
+        "summary": "Could not parse details.",
+        "details": []
+    }
+    try:
+        lines = text.split('\n')
+        parsing_details = False
+        
+        for line in lines:
+            line = line.strip()
+            if not line: continue
+            
+            # Start capturing details
+            if line.startswith("DETAILS:"):
+                parsing_details = True
+                content = line.replace("DETAILS:", "").strip()
+                if content:
+                    data["details"].append(content)
+                continue
+                
+            if parsing_details:
+                # Clean up bullet points for consistency
+                clean_line = line.lstrip("-*• ")
+                if clean_line:
+                    data["details"].append(clean_line)
+                continue
+
+            if line.startswith("Cookies:"):
+                try:
+                    data["cookies"] = int(line.replace("Cookies:", "").strip())
+                except:
+                    pass
+            elif line.startswith("ThirdParty:"):
+                try:
+                    data["third_party"] = int(line.replace("ThirdParty:", "").strip())
+                except:
+                    pass
+            elif line.startswith("JSRequired:"):
+                val = line.replace("JSRequired:", "").strip().lower()
+                data["js_required"] = val == "true"
+            elif line.startswith("SUMMARY:"):
+                data["summary"] = line.replace("SUMMARY:", "").strip()
+                
+    except Exception:
+        pass
+    
+    # Calculate Score
+    # Score logic: 100 - (cookies*5 + third_party*7 + (10 if js else 0))
+    deductions = (data["cookies"] * 5) + (data["third_party"] * 7) + (10 if data["js_required"] else 0)
+    data["score"] = max(0, 100 - deductions)
+    
+    return data
+
+# --- Scoring Matrix Modal ---
+if hasattr(st, "dialog"):
+    dialog_decorator = st.dialog
+else:
+    dialog_decorator = st.experimental_dialog
+
+@dialog_decorator("🍪 Scoring Matrix Explained")
+def show_scoring_matrix():
+    st.markdown("### 🥣 The Secret Recipe")
+    st.markdown("We start with a perfect **100 points** and subtract based on risky ingredients:")
+    
+    st.markdown("""
+    *   **-5 points** per Cookie found 🍪
+    *   **-8 points** per Third-Party Request 📡
+    *   **-15 points** if JavaScript is Required to view content 📜
+    *   **-25 points** if no Privacy Policy is visible 🕵️‍♀️
+    """)
+    
+    st.markdown("---")
+    st.markdown("### 🔥 Oven Temperature (Risk Levels)")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.success("**80-100**\n\nDeliciouso! (Low)")
+    with col2:
+        st.warning("**50-79**\n\nChewy (Medium)")
+    with col3:
+        st.error("**0-49**\n\nBurnt! (High)")
+
+# --- Badge Definitions ---
+BADGE_INFO = {
+    "Mystery Muffin": "Lots of unknown trackers detected.",
+    "Cookie Crumble": "High number of cookies found (>5).",
+    "JavaScript Jiggle": "JavaScript is required to view content.",
+    "Organic Data": "Minimal tracking and data collection.",
+    "Data Feast": "Excessive third-party requests (>5)."
+}
+
+# --- Analyze button ---
+if "result_data" not in st.session_state:
+    st.session_state.result_data = None
+
+if st.button("🥣 Mix Ingredients & Analyze"):
+    if not url:
+        st.warning("⚠️ The bowl is empty! Please enter a URL first.")
+    else:
+        # Gamified loading sequence
+        progress_text = "Heating up the oven..."
+        my_bar = st.progress(0, text=progress_text)
+        
+        time.sleep(0.5)
+        my_bar.progress(25, text="Sifting through the code flour...")
+        
+        website_text = fetch_website_text(url)
+        
+        if website_text:
+            my_bar.progress(50, text="Mixing the data dough...")
+            
+            gemini_raw_result = analyze_with_gemini(website_text)
+            
+            my_bar.progress(75, text="Baking the analysis...")
+            time.sleep(0.5)
+            
+            my_bar.progress(100, text="Ding! Cookies are ready! 🍪")
+            time.sleep(0.5)
+            my_bar.empty()
+
+            # Parse results
+            result_data = parse_gemini_response(gemini_raw_result)
+            st.session_state.result_data = result_data
+            
+            # --- Save/display history for demo purposes ---
+            if "history" not in st.session_state:
+                st.session_state.history = []
+
+            # Calculate risk for history
+            score_h = result_data['score']
+            risk_h = "High"
+            if score_h >= 75: risk_h = "Low"
+            elif score_h >= 45: risk_h = "Medium"
+            
+            badges_h = []
+            if result_data.get('cookies', 0) > 5: badges_h.append("Cookie Crumble")
+            if result_data.get('third_party', 0) > 3: badges_h.append("Mystery Muffin")
+            
+            # Append new history item
+            st.session_state.history.append({
+                "URL": url,
+                "Score": score_h,
+                "Risk": risk_h,
+                "Badges": ", ".join(badges_h) if badges_h else "None",
+                "Timestamp": time.strftime("%H:%M:%S")
+            })
+
+        else:
+            my_bar.empty()
+            st.error("🔥 Oven Malfunction! Could not fetch website content. Try another URL.")
+
+if st.session_state.result_data:
+    result_data = st.session_state.result_data
+    
+    # --- Scoring and Badges ---
+    score = result_data['score']
+    cookies_count = result_data.get('cookies', 0)
+    third_party_count = result_data.get('third_party', 0)
+    js_required = result_data.get('js_required', False)
+    
+    # Assign Badges based on metrics
+    badges = []
+    if cookies_count > 5:
+        badges.append("Cookie Crumble")
+    if third_party_count > 3:
+        badges.append("Mystery Muffin")
+    if third_party_count > 8:
+        badges.append("Data Feast")
+    if js_required:
+        badges.append("JavaScript Jiggle")
+    if score >= 80:
+        badges.append("Organic Data")
+    
+    # --- Display Results ---
+    
+    # Score Display
+    st.markdown(f"<div class='cookie-score'>Cookie Score: {score}/100</div>", unsafe_allow_html=True)
+    
+    # Visual Meter
+    st.progress(score / 100)
+    
+    # Interactive Scoring Matrix Button
+    if st.button("📊 View Scoring Matrix"):
+        show_scoring_matrix()
+    
+    # Risk Level Logic based on Score
+    
+    # Helper for displaying results without GIFs
+    def show_result(message, message_type="info"):
+        if message_type == "success":
+            st.success(message)
+        elif message_type == "warning":
+            st.warning(message)
+        else:
+            st.error(message)
+
+    risk_label = "Unknown"
+    if score >= 75:
+        # Deliciouso!
+        risk_label = "Low"
+        show_result(
+            " Ooh these cookies deliciouso, yum yum! (Safe & Yummy)",
+            "success"
+        )
+        rain_food()
+    
+    elif 45 <= score < 75:
+        # Mildly Chewy
+        risk_label = "Medium"
+        show_result(
+            "🤔 Mildly chewy, some cookies good some nah. (Medium Risk)",
+            "warning"
+        )
+    
+    else: # Score < 45
+        # Bad / Sad Teddy
+        risk_label = "High"
+        show_result(
+            "🤢 Yuck! Burnt & Risky! (Bad Score)",
+            "error"
+        )
+
+    # Summary & Details
+    st.markdown("### 📋 Recipe Card")
+    st.info(result_data['summary'])
+    
+    # Metrics Section
+    col_m1, col_m2, col_m3 = st.columns(3)
+    with col_m1:
+        st.metric("Cookies Detected", cookies_count)
+    with col_m2:
+        st.metric("Third-Party Requests", third_party_count)
+    with col_m3:
+        st.metric("JS Required", "Yes" if js_required else "No")
+
+    st.markdown(f"### 🎖️ Badges Earned")
+    if badges:
+        badge_html = "<div class='badge-container'>"
+        for badge in badges:
+            desc = BADGE_INFO.get(badge, "Unknown Badge")
+            badge_html += f"<div class='badge tooltip'>{badge}<span class='tooltiptext'>{desc}</span></div>"
+        badge_html += "</div>"
+        st.markdown(badge_html, unsafe_allow_html=True)
+    else:
+        st.write("No special badges earned.")
+    
+    # --- Baker's Notes (Card Style) ---
+    details_html = ""
+    # Handle list or string fallback
+    notes_list = result_data['details']
+    if isinstance(notes_list, str):
+        notes_list = [notes_list]
+        
+    if not notes_list:
+        details_html = "<li>No specific notes available.</li>"
+    else:
+        for note in notes_list:
+            # Filter out empty strings or just bullets
+            if note.strip():
+                details_html += f"<li>{note}</li>"
+    
+    st.markdown(f'''
+    <div class="bakers-note-card">
+        <h3>📝 Baker's Notes</h3>
+        <ul>
+            {details_html}
+        </ul>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Display History Table if exists
+    if "history" in st.session_state and st.session_state.history:
+        st.markdown("---")
+        st.markdown("### 📚 Cookbook History")
+        history_df = pd.DataFrame(st.session_state.history)
+        st.table(history_df)
